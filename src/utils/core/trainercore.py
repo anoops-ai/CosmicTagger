@@ -321,7 +321,6 @@ class trainercore(object):
 
     def batch_process(self):
 
-
         start = time.time()
         post_one_time = None
         post_two_time = None
@@ -358,7 +357,8 @@ class trainercore(object):
                     with self.timing_context("train"):
                         self.train_step()
                     with self.timing_context("checkpoint"):
-                        self.checkpoint()
+                        if self.checkpoint() == 1:
+                            logger.info(f'Exiting training at iteration {self._iteration} as pre-emption signal recieved')
                 else:
                     self.ana_step()
 

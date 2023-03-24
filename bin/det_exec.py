@@ -18,6 +18,11 @@ hydra.output_subdir = None
 
 #############################
 
+# For determined:
+import determined as det
+import torch
+import torch.distributed as dist
+
 # Add the local folder to the import path:
 network_dir = os.path.dirname(os.path.abspath(__file__))
 network_dir = os.path.dirname(network_dir)
@@ -28,11 +33,13 @@ from src.config.mode import ModeKind
 
 class exec(object):
 
-    def __init__(self, config):
+    def __init__(self, config, determined_context, determined_info):
 
         self.args = config
+        self.determined_context = determined_context
+        self.determined_info = determined_info
 
-        rank = self.init_mpi()
+        rank = self.determined_context.distributed.get_rank()
 
         # Create the output directory if needed:
         if rank == 0:
@@ -45,26 +52,13 @@ class exec(object):
 
         # Print the command line args to the log file:
         logger = logging.getLogger()
-        logger.info("Dumping launch arguments.")
-        logger.info(sys.argv)
+        if rank == 0:
+            logger.info("Dumping launch arguments.")
+            logger.info(sys.argv)
 
 
         if config.mode.name == ModeKind.train:
             self.train()
-        if config.mode.name == ModeKind.iotest:
-            self.iotest()
-        if config.mode.name == ModeKind.inference:
-            self.inference()
-
-
-
-    def init_mpi(self):
-        if not self.args.run.distributed:
-            return 0
-        else:
-            from mpi4py import MPI
-            comm = MPI.COMM_WORLD
-            return comm.Get_rank()
 
 
     def configure_logger(self, rank):
@@ -101,7 +95,8 @@ class exec(object):
         logger = logging.getLogger("cosmictagger")
 
         logger.info("Running Training")
-        logger.info(self.__str__())
+        if self.determined_context.distributed.get_rank() == 0:
+            logger.info(self.__str__())
 
         self.make_trainer()
 
@@ -109,39 +104,6 @@ class exec(object):
         self.trainer.batch_process()
 
 
-    def iotest(self):
-
-        self.make_trainer()
-        logger = logging.getLogger("cosmictagger")
-
-        logger.info("Running IO Test")
-        logger.info(self.__str__())
-
-
-        self.trainer.initialize(io_only=True)
-
-        if self.args.run.distributed:
-            from mpi4py import MPI
-            rank = MPI.COMM_WORLD.Get_rank()
-        else:
-            rank = 0
-
-        # label_stats = numpy.zeros((36,))
-        global_start = time.time()
-        time.sleep(0.1)
-        for i in range(self.args.run.iterations):
-            start = time.time()
-            mb = self.trainer.larcv_fetcher.fetch_next_batch("train", force_pop=True)
-
-            end = time.time()
-
-            logger.info(f"{i}: Time to fetch a minibatch of data: {end - start:.2f}s")
-
-        total_time = time.time() - global_start
-        images_read = self.args.run.iterations * self.args.run.minibatch_size
-        logger.info(f"Total IO Time: {total_time:.2f}s")
-        logger.info(f"Total images read per batch: {self.args.run.minibatch_size}")
-        logger.info(f"Average Image IO Throughput: { images_read / total_time:.3f}")
 
     def make_trainer(self):
 
@@ -183,25 +145,13 @@ class exec(object):
 
         elif self.args.framework.name == "torch":
             if self.args.run.distributed:
-                from src.utils.torch import distributed_trainer
-                self.trainer = distributed_trainer.distributed_trainer(self.args)
+                from src.utils.torch import det_distributed_trainer
+                self.trainer = det_distributed_trainer.det_distributed_trainer(self.determined_context, self.determined_info, self.args)
             else:
                 from src.utils.torch import trainer
                 self.trainer = trainer.torch_trainer(self.args)
 
 
-    def inference(self):
-
-
-        logger = logging.getLogger("cosmictagger")
-
-        logger.info("Running Inference")
-        logger.info(self.__str__())
-
-        self.make_trainer()
-
-        self.trainer.initialize()
-        self.trainer.batch_process()
 
     def dictionary_to_str(self, in_dict, indentation = 0):
         substr = ""
@@ -259,12 +209,72 @@ class exec(object):
         self.args.network.data_format = self.args.data.data_format.name
 
 
+def merge_config_from_determined(cfg):
+
+    import json
+    hparams = json.loads(os.environ["DET_HPARAMS"])
+    # iterate over overriden hyperparams and update cfg
+    if "override_config" in hparams:
+        updated_values = OmegaConf.create(dict(hparams["override_config"]))
+        cfg = OmegaConf.merge(cfg, updated_values)
+        return cfg
+            
 
 @hydra.main(config_path="../src/config", config_name="config")
 #@hydra.main(version_base=None, config_path="../src/config", config_name="config")
 def main(cfg : OmegaConf) -> None:
 
-    s = exec(cfg)
+    # override config(args) from our yaml files
+    cfg = merge_config_from_determined(cfg)
+    
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+
+    info = det.get_cluster_info()
+    slots_per_node = len(info.slot_ids)
+    num_nodes = len(info.container_addrs)
+    cross_rank = info.container_rank
+    cross_size = int(size / slots_per_node)
+    local_rank = int(rank % slots_per_node)
+
+    # bootstrapping for torch dist
+    C10D_PORT = str(29400)
+    chief_ip = info.container_addrs[0]
+    os.environ['MASTER_ADDR'] = chief_ip
+    os.environ['MASTER_PORT'] = C10D_PORT
+
+
+    distributed = det.core.DistributedContext(
+        rank=rank,
+        size=size,
+        local_rank=local_rank,
+        local_size=slots_per_node,
+        cross_rank=cross_rank,
+        cross_size=num_nodes,
+        chief_ip=chief_ip,
+    )
+    with det.core.init(distributed=distributed) as determined_context:
+        world_size = determined_context.distributed.size
+        num_gpus_per_machine = determined_context.distributed.local_size
+        machine_rank = determined_context.distributed.cross_rank
+        local_rank = determined_context.distributed.local_rank
+
+        print (f"world_size = {world_size}, mpi_rank = {rank},  rank = {determined_context.distributed.rank} num_gpus_per_machine = {num_gpus_per_machine}, machine_rank = {machine_rank}, local_rank = {local_rank}")
+
+
+        # TBR
+        MASTER_PORT_NUM = str(29400)
+        os.environ['MASTER_ADDR'] = determined_context.distributed._chief_ip
+        os.environ['MASTER_PORT'] = MASTER_PORT_NUM
+        print (f'set os env MASTER_ADDR = {determined_context.distributed._chief_ip}')
+        print (f'set os env MASTER_PORT = {MASTER_PORT_NUM}')
+
+        determined_info = det.get_cluster_info()
+
+        s = exec(cfg, determined_context, determined_info)
 
 
 if __name__ == '__main__':

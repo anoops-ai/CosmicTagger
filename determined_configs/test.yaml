@@ -1,0 +1,45 @@
+name: Neutrino-4node
+debug: true
+entrypoint: >-
+  python -m determined.launch.horovod
+  python /grand/projects/determined_eval/code/CosmicTagger/bin/det_exec.py --config-name test
+environment:
+  environment_variables:
+    - OMP_NUM_THREADS=1
+    - NCCL_DEBUG=ERROR
+    # - HTTP_PROXY=http://proxy.alcf.anl.gov:3128
+    - HTTPS_PROXY=http://proxy.alcf.anl.gov:3128
+    # - http_proxy=http://proxy.alcf.anl.gov:3128
+    - https_proxy=http://proxy.alcf.anl.gov:3128
+    # - no_proxy=localhost,127.0.0.1
+
+  image:
+    cuda: /grand/projects/determined_eval/images/neutrino:1.0.sif
+
+resources:
+  slots_per_trial: 16
+max_restarts: 0
+searcher:
+  name: single
+  metric: loss
+  max_length: 500
+hyperparameters:
+  override_config:
+    output_dir: /grand/projects/determined_eval/scratch/joboutput/
+    mode:
+      checkpoint_iteration: 100
+    run:
+      distributed: True
+      minibatch_size: 1
+      id: 1
+bind_mounts:
+  - container_path: /grand/projects/determined_eval
+    host_path: /grand/projects/determined_eval
+    propagation: rprivate
+    read_only: false
+  - container_path: /opt/cray/libfabric
+    host_path: /opt/cray/libfabric
+  - container_path: /opt/cray/pe
+    host_path: /opt/cray/pe
+  - container_path: /var/run/palsd/
+    host_path: /var/run/palsd/
