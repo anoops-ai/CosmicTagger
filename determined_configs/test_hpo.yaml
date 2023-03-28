@@ -17,13 +17,13 @@ environment:
     cuda: /grand/projects/determined_eval/images/neutrino:1.0.sif
 
 resources:
-  slots_per_trial: 8
+  slots_per_trial: 1
 max_restarts: 0
 searcher:
   name: adaptive_asha
   metric: loss
   smaller_is_better: true
-  max_trials: 16 #16
+  max_trials: 8 #16
   max_concurrent_trials: 1
   max_length:
     batches: 200
@@ -46,6 +46,8 @@ hyperparameters:
       distributed: True
       minibatch_size: 1
       id: 1
+    data:
+      synthetic: False
 bind_mounts:
   - container_path: /grand/projects/determined_eval
     host_path: /grand/projects/determined_eval

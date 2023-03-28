@@ -241,10 +241,10 @@ def main(cfg : OmegaConf) -> None:
     local_rank = int(rank % slots_per_node)
 
     # bootstrapping for torch dist
-    C10D_PORT = str(29400)
     chief_ip = info.container_addrs[0]
     os.environ['MASTER_ADDR'] = chief_ip
-    os.environ['MASTER_PORT'] = C10D_PORT
+    c10d_port = os.getenv("C10D_PORT")
+    os.environ['MASTER_PORT'] = os.getenv("C10D_PORT")
 
 
     distributed = det.core.DistributedContext(
@@ -264,13 +264,6 @@ def main(cfg : OmegaConf) -> None:
 
         print (f"world_size = {world_size}, mpi_rank = {rank},  rank = {determined_context.distributed.rank} num_gpus_per_machine = {num_gpus_per_machine}, machine_rank = {machine_rank}, local_rank = {local_rank}")
 
-
-        # TBR
-        MASTER_PORT_NUM = str(29400)
-        os.environ['MASTER_ADDR'] = determined_context.distributed._chief_ip
-        os.environ['MASTER_PORT'] = MASTER_PORT_NUM
-        print (f'set os env MASTER_ADDR = {determined_context.distributed._chief_ip}')
-        print (f'set os env MASTER_PORT = {MASTER_PORT_NUM}')
 
         determined_info = det.get_cluster_info()
 
