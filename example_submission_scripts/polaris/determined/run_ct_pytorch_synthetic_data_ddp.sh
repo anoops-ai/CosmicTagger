@@ -51,4 +51,4 @@ exit_with_status() {
      exit $EXIT_STATUS
 }
 
-task_num=-1; for host in $(sort -u ${PBS_NODEFILE}); do task_num=$((${task_num}+1)); parallel_launch pbs_tmrsh ${host} /grand/projects/determined_eval/bin/agents/determined-agent_0.21.0-dev0_linux_amd64/determined-agent --master-host=$MASTER_HOST  --master-port=8080 --resource-pool=default --container-runtime=singularity  --slot-type=cuda ;done;wait;exit_with_status
+task_num=-1; for host in $(sort -u ${PBS_NODEFILE}); do task_num=$((${task_num}+1)); parallel_launch pbs_tmrsh ${host} /grand/projects/determined_eval/bin/agents/determined-agent_0.21.0_linux_amd64/determined-agent --master-host=$MASTER_HOST  --master-port=8080 --resource-pool=default --container-runtime=singularity  --slot-type=cuda ;done;wait;exit_with_status
