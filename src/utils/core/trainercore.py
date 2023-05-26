@@ -45,7 +45,7 @@ class trainercore(object):
             io_dataformat = "channels_first"
         else:
             sparse = False
-            io_dataformat = args.data.data_format
+            io_dataformat = args.data.data_format.name
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
             mode        = args.mode.name.name,
@@ -81,6 +81,13 @@ class trainercore(object):
 
         # Create the baseline array:
         self.profiling_array = numpy.zeros((args.run.iterations,), dtype=self.profiling_dtype)
+
+        # Store the metrics per iteration into a file, (though only if rank == 0)
+        self.metric_files = {}
+
+    def __del__(self):
+        for key in self.metric_files.keys():
+            self.metric_files[key].close()
 
     def now(self):
         return numpy.datetime64(datetime.datetime.now())
@@ -142,7 +149,7 @@ class trainercore(object):
                     'function'      : 'linear',
                     'start'         : 0,
                     'n_epochs'      : 1,
-                    'initial_rate'  : 0.00001,
+                    'initial_rate'  : 0.0001,
                 },
                 'flat' : {
                     'function'      : 'flat',
@@ -157,32 +164,6 @@ class trainercore(object):
                     'decay_rate'    : 0.999
                 },
             }
-
-        # one_cycle_schedule = {
-        #     'ramp_up' : {
-        #         'function'      : 'linear',
-        #         'start'         : 0,
-        #         'n_epochs'      : 10,
-        #         'initial_rate'  : 0.00001,
-        #         'final_rate'    : 0.001,
-        #     },
-        #     'ramp_down' : {
-        #         'function'      : 'linear',
-        #         'start'         : 10,
-        #         'n_epochs'      : 10,
-        #         'initial_rate'  : 0.001,
-        #         'final_rate'    : 0.00001,
-        #     },
-        #     'decay' : {
-        #         'function'      : 'decay',
-        #         'start'         : 20,
-        #         'n_epochs'      : 5,
-        #         'rate'          : 0.00001
-        #         'floor'         : 0.00001,
-        #         'decay_rate'    : 0.99
-        #     },
-        # }
-        # learning_rate_schedule = one_cycle_schedule
 
         # We build up the functions we need piecewise:
         func_list = []
@@ -241,6 +222,22 @@ class trainercore(object):
     def set_compute_parameters(self):
         pass
 
+    def write_metrics(self, metrics, kind, step):
+        '''
+        Write the metrics into a csv file.
+        '''
+        if kind not in self.metric_files:
+            # Initialize the file:
+            fname = f"{self.args.output_dir}/{kind}_metrics.csv"
+            self.metric_files[kind] = open(fname, 'w')
+            # Dump the header in:
+            self.metric_files[kind].write("step,"+",".join(metrics.keys())+"\n")
+
+        # Write the metrics in:
+        values = [ f"{v:.5f}" for v in metrics.values()]
+        self.metric_files[kind].write(f"{step}," + ",".join(values)+"\n")
+
+
 
     def log(self, metrics, kind, step):
 
@@ -260,6 +257,7 @@ class trainercore(object):
             log_string.rstrip(", ")
 
         logger.info(log_string)
+        self.write_metrics(metrics, kind, step)
 
         return
 
@@ -317,7 +315,6 @@ class trainercore(object):
         start = self.now()
         yield
         self.profiling_array[self.profiling_index][key] = self.now() - start
-
 
     def batch_process(self):
 

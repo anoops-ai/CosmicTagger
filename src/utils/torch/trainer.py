@@ -21,7 +21,7 @@ except:
 
 
 
-torch.manual_seed(0)
+# torch.manual_seed(0)
 
 # torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True
@@ -495,13 +495,12 @@ class torch_trainer(trainercore):
             if len(time_string) > 0:
                 s += " (" + " / ".join(time_string) + ")"
 
-            # except:
-            #     pass
-
-
 
             self._previous_log_time = self._current_log_time
             logger.info("{} Step {} metrics: {}".format(saver, self._global_step, s))
+
+        self.write_metrics(metrics, saver, self._global_step)
+
 
     def summary(self, metrics,saver=""):
 
@@ -674,7 +673,6 @@ class torch_trainer(trainercore):
 
         return minibatch_data
 
-
     def forward_pass(self, minibatch_data, net=None):
 
 
@@ -779,6 +777,17 @@ class torch_trainer(trainercore):
                     if not self.args.run.distributed or self._rank == 0:
                         prof.export_chrome_trace("timeline_" + str(self._global_step) + ".json")
 
+            # Putting the optimization step here so the metrics and such can be concurrent:
+            with self.timing_context("optimizer"):
+                # Apply the parameter update:
+                if self.args.run.precision == Precision.mixed and self.args.run.compute_mode == ComputeMode.GPU:
+                    self.scaler.step(self._opt)
+                    self.scaler.update()
+                else:
+                    self._opt.step()
+
+                self.lr_scheduler.step()
+
             # Here, make sure to normalize the interior metrics:
             for key in metrics:
                 metrics[key] /= grad_accum
@@ -798,15 +807,6 @@ class torch_trainer(trainercore):
             step_start_time = datetime.datetime.now()
 
 
-            with self.timing_context("optimizer"):
-                # Apply the parameter update:
-                if self.args.run.precision == Precision.mixed and self.args.run.compute_mode == ComputeMode.GPU:
-                    self.scaler.step(self._opt)
-                    self.scaler.update()
-                else:
-                    self._opt.step()
-
-                self.lr_scheduler.step()
 
             if verbose: logger.debug("Updated Weights")
             global_end_time = datetime.datetime.now()

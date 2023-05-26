@@ -62,13 +62,19 @@ class UResNet(Network):
 
 @dataclass
 class A21(Network):
+    """
+    In tensorflow, this model should have 8516083 parameters total.
+    In pytorch, this model should have 8510547 parameters total.
+    """
     name:                 str          = "A21"
     n_initial_filters:    int          = 8
     filter_size_deepest:  int          = 5
     residual:             bool         = False
     block_concat:         bool         = False
+    blocks_final:         int          = 0
     growth_rate:          GrowthRate   = GrowthRate.additive
     data_format:          str          = MISSING
+    connections:          Connection   = Connection.sum
 
 @dataclass
 class SCC21(Network):
