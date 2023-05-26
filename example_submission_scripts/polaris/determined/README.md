@@ -22,7 +22,7 @@ sh start_master.sh
 ### Run Database
 
 ``` bash 
-sh start_master.sh
+sh start_database.sh
 ```
 
 
